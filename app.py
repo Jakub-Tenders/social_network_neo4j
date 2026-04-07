@@ -1,46 +1,37 @@
 # social_network.py
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session
+import os
 import sqlite3
+from neo4j import GraphDatabase
+from dotenv import load_dotenv
 from dataclasses import dataclass
 from typing import List, Optional
 
 # ======================
 # Database Access Layer
 # ======================
+load_dotenv()
 class Database:
     def __init__(self, db_name='social_network.db'):
         self.db_name = db_name
         self._init_db()
     
     def _init_db(self):
-        with self._get_connection() as conn:
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS users (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT UNIQUE NOT NULL,
-                    name TEXT NOT NULL
-                )
-            ''')
-            
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS posts (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    content TEXT NOT NULL,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY(user_id) REFERENCES users(id)
-                )
-            ''')
-            
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS followers (
-                    follower_id INTEGER NOT NULL,
-                    followee_id INTEGER NOT NULL,
-                    PRIMARY KEY(follower_id, followee_id),
-                    FOREIGN KEY(follower_id) REFERENCES users(id),
-                    FOREIGN KEY(followee_id) REFERENCES users(id)
-                )
-            ''')
+        uri = os.getenv("NEO4J_URI")
+        username = os.getenv("NEO4J_USERNAME")
+        password = os.getenv("NEO4J_PASSWORD")
+
+        driver = GraphDatabase.driver(uri, auth=(username, password))
+        with driver.session() as session:
+            session.run(
+                "CREATE CONSTRAINT unique_user_id IF NOT EXISTS "
+                "FOR (u:User) REQUIRE u.id IS UNIQUE;"
+            )
+            session.run(
+                "CREATE CONSTRAINT unique_username IF NOT EXISTS "
+                "FOR (u:User) REQUIRE u.username IS UNIQUE;"
+            )
+        driver.close()
     
     def _get_connection(self):
         return sqlite3.connect(self.db_name)
