@@ -42,19 +42,20 @@ class Database:
         return sqlite3.connect(self.db_name)
     
     # User operations
-    def create_user(self, username: str, name: str) -> int:
+    def create_user(self, username: str, name: str) -> str:
         with self.driver.session() as session:
             result = session.run(
                 """
                 CREATE (u:User {username: $username, name: $name, id: randomUUID()})
                 RETURN u.id AS id
                 """,
-                username=username, name=name
+                username=username,
+                name=name,
             )
             record = result.single()
             return record["id"] if record else None
     
-    def get_user(self, user_id: int) -> Optional[dict]:
+    def get_user(self, user_id: str) -> Optional[dict]:
         with self.driver.session() as session:
             result = session.run(
                 """
@@ -62,7 +63,7 @@ class Database:
                 WHERE u.id = $user_id
                 RETURN u.id AS id, u.username AS username, u.name AS name
                 """,
-                user_id=user_id
+                user_id=user_id,
             )
             record = result.single()
             return dict(record) if record else None
@@ -78,28 +79,37 @@ class Database:
             return [dict(record) for record in result]
     
     # Post operations
-    def create_post(self, user_id: int, content: str) -> int:
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('INSERT INTO posts (user_id, content) VALUES (?, ?)', (user_id, content))
-            return cursor.lastrowid
+    def create_post(self, user_id: str, content: str) -> str:
+        with self.driver.session() as session:
+            result = session.run(
+                """
+                MATCH (u:User {id: $user_id})
+                CREATE (p:Post {
+                    id: randomUUID(),
+                    content: $content,
+                    timestamp: datetime()
+                })
+                CREATE (u)-[:CREATED]->(p)
+                RETURN p.id AS id
+                """,
+                user_id=user_id,
+                content=content,
+            )
+            record = result.single()
+            return record["id"] if record else None
     
-    def get_posts_by_user(self, user_id: int) -> List[dict]:
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT p.id, p.content, p.timestamp, u.username, u.name 
-                FROM posts p JOIN users u ON p.user_id = u.id 
-                WHERE p.user_id = ?
+    def get_posts_by_user(self, user_id: str) -> List[dict]:
+        with self.driver.session() as session:
+            result = session.run(
+                '''
+                MATCH (u:User {id: $user_id})-[:CREATED]->(p:Post)
+                RETURN p.id AS id, p.content AS content, p.timestamp AS timestamp,
+                u.username AS username, u.name AS name
                 ORDER BY p.timestamp DESC
-            ''', (user_id,))
-            return [{
-                'id': row[0],
-                'content': row[1],
-                'timestamp': row[2],
-                'username': row[3],
-                'name': row[4]
-            } for row in cursor.fetchall()]
+                ''',
+            user_id=user_id,
+            )
+            return [dict(record) for record in result]
     
     def get_feed(self, user_id: int) -> List[dict]:
         with self._get_connection() as conn:
@@ -181,24 +191,24 @@ with app.app_context():
 def api_get_users():
     return jsonify(db.get_all_users())
 
-@app.route('/api/users/<int:user_id>', methods=['GET'])
+@app.route("/api/users/<user_id>", methods=["GET"])
 def api_get_user(user_id):
     user = db.get_user(user_id)
     return jsonify(user) if user else ('User not found', 404)
 
-@app.route('/api/users/<int:user_id>/posts', methods=['GET'])
+@app.route('/api/users/<user_id>/posts', methods=['GET'])
 def api_get_user_posts(user_id):
     return jsonify(db.get_posts_by_user(user_id))
 
-@app.route('/api/users/<int:user_id>/feed', methods=['GET'])
+@app.route('/api/users/<user_id>/feed', methods=['GET'])
 def api_get_user_feed(user_id):
     return jsonify(db.get_feed(user_id))
 
-@app.route('/api/users/<int:user_id>/followers', methods=['GET'])
+@app.route('/api/users/<user_id>/followers', methods=['GET'])
 def api_get_user_followers(user_id):
     return jsonify(db.get_followers(user_id))
 
-@app.route('/api/users/<int:user_id>/following', methods=['GET'])
+@app.route('/api/users/<user_id>/following', methods=['GET'])
 def api_get_user_following(user_id):
     return jsonify(db.get_following(user_id))
 
@@ -225,7 +235,7 @@ def home():
         current_user = db.get_user(session['user_id'])
     return render_template('index.html', users=users, current_user=current_user)
 
-@app.route('/user/<int:user_id>')
+@app.route('/user/<user_id>')
 def user_profile(user_id):
     user = db.get_user(user_id)
     if not user:
@@ -253,7 +263,7 @@ def user_profile(user_id):
                          current_user=current_user,
                          is_following=is_following)
 
-@app.route('/user/<int:user_id>/feed')
+@app.route('/user/<user_id>/feed')
 def user_feed(user_id):
     user = db.get_user(user_id)
     feed = db.get_feed(user_id)
@@ -261,12 +271,12 @@ def user_feed(user_id):
 
 @app.route('/create_post', methods=['POST'])
 def create_post():
-    user_id = int(request.form['user_id'])
+    user_id = request.form["user_id"]
     content = request.form['content']
     db.create_post(user_id, content)
     return redirect(url_for('user_profile', user_id=user_id))
 
-@app.route('/login/<int:user_id>')
+@app.route('/login/<user_id>')
 def login(user_id):
     session['user_id'] = user_id
     return redirect(url_for('home'))
@@ -278,8 +288,8 @@ def logout():
 
 @app.route('/follow', methods=['POST'])
 def follow():
-    follower_id = int(request.form['follower_id'])
-    followee_id = int(request.form['followee_id'])
+    follower_id = request.form['follower_id']
+    followee_id = request.form['followee_id']
     
     # Check if the user is already following
     following = db.get_following(follower_id)
