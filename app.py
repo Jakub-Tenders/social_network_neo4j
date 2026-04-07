@@ -37,8 +37,7 @@ class Database:
                 "FOR (u:User) REQUIRE u.username IS UNIQUE;"
             )
     
-    def _get_connection(self):
-        return sqlite3.connect(self.db_name)
+    
     
     # User operations
     def create_user(self, username: str, name: str) -> str:
