@@ -12,17 +12,23 @@ from typing import List, Optional
 # ======================
 load_dotenv()
 class Database:
-    def __init__(self, db_name='social_network.db'):
-        self.db_name = db_name
+    def __init__(
+        self,
+        uri=None,
+        username=None,
+        password=None,
+    ):
+        load_dotenv()
+        self.uri = uri or os.getenv("NEO4J_URI", "bolt://localhost:7687")
+        self.username = username or os.getenv("NEO4J_USERNAME", "neo4j")
+        self.password = password or os.getenv("NEO4J_PASSWORD", "")
+        self.driver = GraphDatabase.driver(
+            self.uri, auth=(self.username, self.password)
+        )
         self._init_db()
     
     def _init_db(self):
-        uri = os.getenv("NEO4J_URI")
-        username = os.getenv("NEO4J_USERNAME")
-        password = os.getenv("NEO4J_PASSWORD")
-
-        driver = GraphDatabase.driver(uri, auth=(username, password))
-        with driver.session() as session:
+        with self.driver.session() as session:
             session.run(
                 "CREATE CONSTRAINT unique_user_id IF NOT EXISTS "
                 "FOR (u:User) REQUIRE u.id IS UNIQUE;"
@@ -31,7 +37,6 @@ class Database:
                 "CREATE CONSTRAINT unique_username IF NOT EXISTS "
                 "FOR (u:User) REQUIRE u.username IS UNIQUE;"
             )
-        driver.close()
     
     def _get_connection(self):
         return sqlite3.connect(self.db_name)
